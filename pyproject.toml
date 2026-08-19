@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atf"
+version = "0.1.0"
+description = "pytest-based test framework for Android devices"
+requires-python = ">=3.9"
+dependencies = [
+    "pytest>=7.4",
+    "Appium-Python-Client>=3.1",
+    "selenium>=4.15",
+    "PyYAML>=6.0",
+    "pytest-html>=4.1",
+    "pytest-xdist>=3.5",
+]
+
+[tool.setuptools]
+packages = ["atf"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"

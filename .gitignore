@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Test output — logcat and screenshots captured from real devices.
+# These contain device and account details and must never be committed.
+artifacts/
+report.html
+results.xml
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

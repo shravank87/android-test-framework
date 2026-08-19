@@ -1,0 +1,28 @@
+# System-testing configuration.
+#
+# The `app` block is only used by the optional UI layer (tests/test_ui_settings.py),
+# which drives the system Settings app through Appium. Leave it as-is unless you
+# want UI-level system tests; nothing in the system suites depends on it.
+app:
+  package: com.android.settings
+  activity: .Settings
+  apk_path: ""
+  test_apk_path: ""
+  # Set this only to run instrumentation-based system suites (e.g. CTS modules),
+  # in the form "<test package>/<runner class>".
+  instrumentation_runner: ""
+
+appium:
+  server_url: http://127.0.0.1:4723
+  automation_name: UiAutomator2
+  new_command_timeout: 120
+  implicit_wait: 0
+  extra_capabilities: {}
+
+artifacts_dir: artifacts
+capture_logcat: true
+screenshot_on_failure: true
+
+# Never install or wipe anything on the device under test.
+reinstall_app: false
+clear_data_between_tests: false
