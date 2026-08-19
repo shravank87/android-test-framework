@@ -653,6 +653,42 @@ class System:
     def volume(self, stream="STREAM_MUSIC"):
         return parse_stream_volume(self.adb.shell("dumpsys", "audio"), stream)
 
+    def keyguard_showing(self):
+        """Whether the lock screen is up. None when the device does not say."""
+        out = self.adb.shell("dumpsys window | grep -o 'isKeyguardShowing=[a-z]*'",
+                             check=False)
+        match = re.search(r"isKeyguardShowing=(\w+)", out)
+        return match.group(1) == "true" if match else None
+
+    def has_secure_lock(self):
+        """True when a PIN, pattern or password guards the device.
+
+        Such a device cannot be unlocked by dismissing the keyguard; it stops at
+        the credential prompt.
+        """
+        out = self.adb.shell("dumpsys trust | grep -o 'strongAuthRequired=0x[0-9a-f]*'",
+                             check=False)
+        match = re.search(r"strongAuthRequired=0x([0-9a-f]+)", out)
+        if match:
+            return int(match.group(1), 16) != 0
+        return None
+
+    def ensure_awake(self, attempts=2):
+        """Wake the display and clear the lock screen. Returns True when usable.
+
+        Called before UI work: uiautomator cannot dump a dark screen, and a
+        lock screen hides whatever the test came to look at. A run long enough
+        to hit the screen timeout would otherwise start failing midway.
+        """
+        for _ in range(attempts):
+            self.adb.wake()
+            if self.keyguard_showing():
+                self.adb.dismiss_keyguard()
+            time.sleep(1)
+            if self.screen_on() and not self.keyguard_showing():
+                return True
+        return False
+
     def screen_on(self):
         """Whether the display is awake.
 

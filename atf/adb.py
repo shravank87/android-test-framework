@@ -225,6 +225,19 @@ class Adb:
     def keyevent(self, key):
         self.shell("input", "keyevent", str(key))
 
+    def wake(self):
+        """Turn the display on. KEYCODE_WAKEUP, not POWER, so it never sleeps
+        a device that was already awake."""
+        self.shell("input", "keyevent", "224")   # KEYCODE_WAKEUP
+
+    def sleep_screen(self):
+        self.shell("input", "keyevent", "223")   # KEYCODE_SLEEP
+
+    def dismiss_keyguard(self):
+        """Swipe away the lock screen. A device with a PIN or pattern will stop
+        at the credential prompt instead."""
+        self.shell("wm", "dismiss-keyguard", check=False)
+
     # --- files & capture ---
 
     def push(self, local, remote):

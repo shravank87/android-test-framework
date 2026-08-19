@@ -145,6 +145,10 @@ def settings(pytestconfig):
 def adb(device_serial, settings):
     device = Adb(device_serial)
     device.wait_for_boot()
+    # Start every session from a woken, unlocked device: a dark or locked screen
+    # breaks UI tests and hides what the others are inspecting.
+    device.wake()
+    device.dismiss_keyguard()
     if settings.reinstall_app and settings.app.apk_path:
         device.install(settings.app.apk_path)
     if settings.app.test_apk_path:
@@ -171,10 +175,17 @@ def system(adb):
 
 @pytest.fixture
 def ui(adb, system):
-    """Drive and inspect the screen over adb (no Appium). Needs the screen on."""
+    """Drive and inspect the screen over adb (no Appium).
+
+    Wakes and unlocks first: a long run can hit the screen timeout partway
+    through, and uiautomator cannot dump a dark or locked screen.
+    """
     from .ui import Ui
-    if system.screen_on() is False:
-        pytest.skip("screen is off; uiautomator cannot dump the hierarchy")
+    if not system.ensure_awake():
+        if system.has_secure_lock():
+            pytest.skip("device has a PIN, pattern or password; unlock it to run "
+                        "UI tests, or clear the screen lock on the test device")
+        pytest.skip("could not wake and unlock the screen")
     return Ui(adb)
 
 

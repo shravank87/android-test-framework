@@ -211,7 +211,7 @@ phone attached, or a cloud device farm.
 - `device_state` — mutate with guaranteed restore: `.put_setting()`, `.set_wifi()`,
   `.set_airplane_mode()`, `.set_bluetooth()`
 - `ui` — drive the screen over adb, no Appium: `.tap()`, `.scroll_to()`,
-  `.set_switch()`, `.type_into()`
+  `.set_switch()`, `.type_into()`. Wakes and unlocks the device first
 - `test_data` — networks and credentials from `config/testdata.yaml`
 - `step` — log a narrative line into `test_run.log`
 - `adb` — raw device access for anything the facade doesn't cover
