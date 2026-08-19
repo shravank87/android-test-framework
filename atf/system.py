@@ -302,6 +302,43 @@ def parse_wifi_info(text):
 
 
 @dataclass
+class SavedNetwork:
+    network_id: int
+    ssid: str
+    security: str = ""
+
+
+# "0            MyNetwork                        wpa3-sae" — the SSID may contain
+# spaces, so it runs up to the column gap before the security type.
+_SAVED_ROW_RE = re.compile(r"^\s*(\d+)\s+(.+?)\s{2,}(\S+)\s*$")
+
+
+def parse_saved_networks(text):
+    """Parse `cmd wifi list-networks`, collapsing duplicate ids.
+
+    A network in WPA2/WPA3 transition mode is listed once per security type
+    under the same id; forgetting it once is enough.
+    """
+    seen, networks = set(), []
+    for line in text.splitlines():
+        if "Network Id" in line:
+            continue           # header
+        match = _SAVED_ROW_RE.match(line)
+        if not match:
+            continue
+        network_id = int(match.group(1))
+        if network_id in seen:
+            continue
+        seen.add(network_id)
+        networks.append(
+            SavedNetwork(network_id=network_id,
+                         ssid=match.group(2).strip(),
+                         security=match.group(3).strip().rstrip("^"))
+        )
+    return networks
+
+
+@dataclass
 class ScanResult:
     bssid: str
     frequency_mhz: int
@@ -511,6 +548,28 @@ class System:
     def wifi_info(self):
         """Structured Wi-Fi association details, or None when not associated."""
         return parse_wifi_info(self.wifi_status())
+
+    def saved_networks(self):
+        """Networks the device has stored credentials for."""
+        return parse_saved_networks(
+            self.adb.shell("cmd", "wifi", "list-networks", check=False)
+        )
+
+    def forget_network(self, network_id):
+        return self.adb.shell("cmd", "wifi", "forget-network", str(network_id),
+                              check=False)
+
+    def forget_all_networks(self):
+        """Clear every saved network. Returns the SSIDs removed.
+
+        Credentials cannot be read back off the device, so callers are
+        responsible for restoring anything they still need.
+        """
+        removed = []
+        for network in self.saved_networks():
+            self.forget_network(network.network_id)
+            removed.append(network.ssid)
+        return removed
 
     def wifi_scan(self, trigger=True, settle=4.0):
         """Return the latest Wi-Fi scan results.

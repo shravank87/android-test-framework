@@ -16,6 +16,46 @@ VALID_PRIVATE_DNS = {"off", "opportunistic", "hostname"}
 
 
 @pytest.fixture
+def forgotten_networks(system, test_data, step):
+    """Clear every saved network, then restore the configured one afterwards.
+
+    Without this a connect test passes trivially: the device is already
+    associated, so the first check succeeds whether or not the credentials were
+    ever used. Starting from no saved networks makes the connection real.
+
+    Only runs when config/testdata.yaml is present, because credentials cannot be
+    read back off the device — that file is the only way to put the device back
+    on its network afterwards.
+    """
+    if not test_data.available:
+        pytest.skip("no config/testdata.yaml; refusing to forget networks that "
+                    "could not then be restored")
+
+    network = test_data.wifi_network("default")
+    removed = system.forget_all_networks()
+    step(f"forgot {len(removed)} saved network(s) before connecting")
+    time.sleep(2)
+
+    yield network
+
+    # Put the device back on its network whatever the test did.
+    if not any(n.ssid == network.ssid for n in system.saved_networks()):
+        step(f"restoring {network.ssid}")
+        args = ["cmd", "wifi", "connect-network", network.ssid, network.security]
+        if not network.is_open:
+            args.append(network.password)
+        system.adb.shell(*args, check=False)
+
+    deadline = time.time() + 45
+    while time.time() < deadline:
+        info = system.wifi_info()
+        if info is not None and info.ssid == network.ssid:
+            break
+        time.sleep(2)
+    step("device restored to its network")
+
+
+@pytest.fixture
 def online(system):
     """Skip a test when the device has no usable network."""
     if system.radios().airplane_mode:
@@ -197,19 +237,17 @@ def test_mobile_data_is_available_when_a_sim_is_present(system):
 
 @pytest.mark.system
 @pytest.mark.mutates
-def test_connects_to_configured_network(system, adb, test_data, step):
+def test_connects_to_configured_network(system, adb, forgotten_networks, step):
     """Connect to the network named in config/testdata.yaml.
 
-    The SSID, security type and passphrase all come from that file, so nothing
-    here is hard-coded and the password never appears in the log — it is
-    registered as a secret when the file loads.
+    Saved networks are cleared first, so this is a genuine connection rather
+    than an assertion about a link that already existed. The SSID, security type
+    and passphrase all come from that file; nothing here is hard-coded.
     """
-    if not test_data.available:
-        pytest.skip("no config/testdata.yaml; see config/testdata.example.yaml")
     if not system.radios().wifi_enabled:
         pytest.skip("Wi-Fi is disabled on this device")
 
-    network = test_data.wifi_network("default")
+    network = forgotten_networks
     step(f"connecting to {network.ssid} ({network.security})")
 
     args = ["cmd", "wifi", "connect-network", network.ssid, network.security]
