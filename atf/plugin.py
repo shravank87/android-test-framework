@@ -552,7 +552,9 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     html_path.write_text(_render_html(config, started, totals), encoding="utf-8")
     writer.write_line(f"Report written to {html_path}")
     if runlog.enabled():
-        writer.write_line(f"Run log at {run / 'artifacts' / 'test_run.log'}")
+        logs = run / "artifacts"
+        writer.write_line(f"Run log at {logs / 'test_run.log'} "
+                          f"(full output in {runlog.DEBUG_FILENAME})")
 
     _capture_bugreport(config, writer, totals)
 
@@ -680,7 +682,7 @@ def pytest_sessionstart(session):
         return
     artifacts = run / "artifacts"
     artifacts.mkdir(parents=True, exist_ok=True)
-    runlog.configure(artifacts / "test_run.log")
+    runlog.configure(artifacts / "test_run.log", artifacts / runlog.DEBUG_FILENAME)
     runlog.banner(f"RUN STARTED {session.config._atf_started:%Y-%m-%d %H:%M:%S}")
 
 
@@ -713,4 +715,6 @@ def _log_outcome(report, name, outcome, reason):
     """
     label = OUTCOME_LABEL[outcome]
     line = f"TEST {label}  {name} ({report.duration:.2f}s)"
-    runlog.LOGGER.info(line if not reason else f"{line} | {runlog.block(reason)}")
+    # The outcome belongs in both logs; a failure reason is one line, so it stays
+    # on the narrative line rather than being pushed to the debug log.
+    runlog.note(line if not reason else f"{line} | {reason}")

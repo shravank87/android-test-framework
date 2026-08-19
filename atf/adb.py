@@ -97,12 +97,10 @@ class Adb:
         elapsed = time.time() - started
         if runlog.enabled():
             if proc.returncode == 0:
-                runlog.result(f"ok in {elapsed:.2f}s | {runlog.block(proc.stdout)}")
+                runlog.result(f"ok in {elapsed:.2f}s", proc.stdout)
             else:
-                runlog.result(
-                    f"exit {proc.returncode} in {elapsed:.2f}s | "
-                    f"{runlog.block(proc.stderr or proc.stdout)}"
-                )
+                runlog.result(f"exit {proc.returncode} in {elapsed:.2f}s",
+                              proc.stderr or proc.stdout)
         if check and proc.returncode != 0:
             raise AdbError(cmd, proc.returncode, proc.stdout, proc.stderr)
         return proc

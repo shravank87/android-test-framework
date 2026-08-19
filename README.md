@@ -130,7 +130,8 @@ Results/2026-08-18_21-52-12/
 ├── report.html                 suites, test names, results, failure reasons
 ├── report.txt                  the same as plain text
 └── artifacts/
-    ├── test_run.log            timestamped log of the whole run
+    ├── test_run.log            what each test did, and how it ended
+    ├── test_run_debug.log      the same, with every byte of command output
     └── <serial>/
         ├── bugreport.zip       only if something failed
         └── <test name>/
@@ -138,8 +139,10 @@ Results/2026-08-18_21-52-12/
             └── failure.png     only on failure
 ```
 
-`test_run.log` records every device command and its full output, so a test reads
-back as the actions it took and what each returned:
+`test_run.log` is the narrative: the actions a test took and their results, with
+short output inline and anything bulky left to `test_run_debug.log`. A single
+`dumpsys connectivity` runs to ~490 lines, which is why the two are separate — a
+connectivity run is 5KB of narrative against 788KB of full output.
 
 ```
 21:52:12.611  ── TEST test_connects_to_configured_network
