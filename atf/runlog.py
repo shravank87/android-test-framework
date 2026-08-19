@@ -11,7 +11,7 @@ file reads as a narrative of each test: the action taken, then its result.
 import logging
 
 LOGGER = logging.getLogger("atf.run")
-MAX_RESULT_CHARS = 220
+CONTINUATION_INDENT = "    "
 
 _handler = None
 
@@ -45,12 +45,23 @@ def enabled():
     return _handler is not None
 
 
-def condense(text, limit=MAX_RESULT_CHARS):
-    """Collapse a command's output to one readable line."""
-    if not text:
+def block(text):
+    """Format command output for the log in full, never truncated.
+
+    Single-line output stays on the result line. Multi-line output is written
+    verbatim beneath it, indented so the timestamped lines remain the structure
+    of the file.
+    """
+    if text is None:
         return ""
-    flat = " ".join(str(text).split())
-    return flat if len(flat) <= limit else flat[:limit] + f"... (+{len(flat) - limit} chars)"
+    body = str(text).rstrip("\n")
+    if not body.strip():
+        return ""
+    lines = body.split("\n")
+    if len(lines) == 1:
+        return lines[0]
+    indented = "\n".join(CONTINUATION_INDENT + line for line in lines)
+    return "\n" + indented
 
 
 def banner(message):

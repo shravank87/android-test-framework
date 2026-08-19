@@ -674,4 +674,4 @@ def _log_outcome(report, name, outcome, reason):
     """
     label = OUTCOME_LABEL[outcome]
     line = f"TEST {label}  {name} ({report.duration:.2f}s)"
-    runlog.LOGGER.info(line if not reason else f"{line} | {runlog.condense(reason)}")
+    runlog.LOGGER.info(line if not reason else f"{line} | {runlog.block(reason)}")
