@@ -5,6 +5,7 @@ than documentation — field names drift between Android releases, so each parse
 tolerates missing keys and returns None instead of raising.
 """
 import re
+import time
 from dataclasses import dataclass, field
 
 # dumpsys battery emits "  key: value"; keys contain spaces ("AC powered").
@@ -301,6 +302,58 @@ def parse_wifi_info(text):
 
 
 @dataclass
+class ScanResult:
+    bssid: str
+    frequency_mhz: int
+    rssi: int
+    age_seconds: float
+    ssid: str = ""
+    flags: str = ""
+
+    @property
+    def hidden(self):
+        """Access points that withhold their SSID scan as a blank name."""
+        return not self.ssid
+
+    @property
+    def band(self):
+        return WifiInfo(frequency_mhz=self.frequency_mhz).band
+
+    @property
+    def secured(self):
+        return any(tag in self.flags for tag in ("WPA", "RSN", "SAE", "WEP"))
+
+
+# "  <bssid>  <freq>  <rssi>  <age>  <ssid>  <flags>" — the SSID may be empty and
+# may itself contain spaces, so it is taken as whatever sits between the age and
+# the flags rather than as a whitespace-delimited column.
+_SCAN_ROW_RE = re.compile(
+    r"^\s*([0-9a-f]{2}(?::[0-9a-f]{2}){5})\s+(\d+)\s+(-?\d+)\s+([\d.]+)\s*(.*?)\s*(\[.*)?$",
+    re.IGNORECASE,
+)
+
+
+def parse_scan_results(text):
+    """Parse `cmd wifi list-scan-results` into ScanResult rows."""
+    results = []
+    for line in text.splitlines():
+        match = _SCAN_ROW_RE.match(line)
+        if not match:
+            continue           # header, blank line, or an error message
+        results.append(
+            ScanResult(
+                bssid=match.group(1).lower(),
+                frequency_mhz=int(match.group(2)),
+                rssi=int(match.group(3)),
+                age_seconds=float(match.group(4)),
+                ssid=match.group(5) or "",
+                flags=match.group(6) or "",
+            )
+        )
+    return results
+
+
+@dataclass
 class NetworkInfo:
     transports: set = field(default_factory=set)
     capabilities: set = field(default_factory=set)
@@ -458,6 +511,20 @@ class System:
     def wifi_info(self):
         """Structured Wi-Fi association details, or None when not associated."""
         return parse_wifi_info(self.wifi_status())
+
+    def wifi_scan(self, trigger=True, settle=4.0):
+        """Return the latest Wi-Fi scan results.
+
+        Android throttles scan requests, so a refused `start-scan` is not an
+        error — the cached results from the platform's own periodic scan are
+        returned instead.
+        """
+        if trigger:
+            self.adb.shell("cmd", "wifi", "start-scan", check=False)
+            time.sleep(settle)
+        return parse_scan_results(
+            self.adb.shell("cmd", "wifi", "list-scan-results", check=False)
+        )
 
     def active_network(self):
         """The connected network's transports, capabilities, addresses and DNS."""

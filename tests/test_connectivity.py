@@ -69,6 +69,34 @@ def test_wifi_signal_is_usable(online):
 
 
 @pytest.mark.system
+def test_wifi_scan_finds_networks(system, step):
+    """Scan for access points and check every row is well formed.
+
+    Assertions stay structural: the visible networks belong to whoever is
+    nearby, so nothing here depends on a particular SSID being present.
+    """
+    if not system.radios().wifi_enabled:
+        pytest.skip("Wi-Fi is disabled; scanning is unavailable")
+
+    step("triggering a Wi-Fi scan")
+    results = system.wifi_scan()
+    assert results, "scan returned no access points at all"
+    step(f"scan returned {len(results)} access points")
+
+    for ap in results:
+        assert -100 <= ap.rssi <= 0, f"{ap.bssid} reports RSSI {ap.rssi} dBm"
+        assert ap.band in ("2.4GHz", "5GHz", "6GHz"), (
+            f"{ap.bssid} on {ap.frequency_mhz}MHz maps to band {ap.band}"
+        )
+        assert ap.age_seconds >= 0, f"{ap.bssid} has negative scan age"
+
+    # A hidden access point still scans, just without a name.
+    named = [ap for ap in results if not ap.hidden]
+    step(f"{len(named)} named, {len(results) - len(named)} hidden")
+    assert named, "every access point reported a blank SSID, which suggests a parse failure"
+
+
+@pytest.mark.system
 def test_wifi_link_speed_is_positive(online):
     speed = online.wifi_info().link_speed_mbps
     assert speed is not None and speed > 0, f"negotiated link speed is {speed}"
