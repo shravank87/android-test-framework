@@ -88,6 +88,28 @@ def pytest_generate_tests(metafunc):
         metafunc.parametrize("device_serial", serials, ids=serials, scope="session")
 
 
+def run_dir(config):
+    """The folder holding everything this run produced, or None if disabled.
+
+    Results/<YYYY-MM-DD_HH-MM-SS>/ — reports and per-test artifacts both live
+    here, so a run's logcat and screenshots stay with the report describing them.
+    """
+    cached = getattr(config, "_atf_run_dir", None)
+    if cached is not None:
+        return cached or None
+
+    report_root = config.getoption("--report-dir")
+    if not report_root:
+        config._atf_run_dir = False
+        return None
+
+    started = getattr(config, "_atf_started", None) or datetime.now()
+    path = Path(config.rootpath) / report_root / started.strftime("%Y-%m-%d_%H-%M-%S")
+    path.mkdir(parents=True, exist_ok=True)
+    config._atf_run_dir = path
+    return path
+
+
 @pytest.fixture(scope="session")
 def settings(pytestconfig):
     cfg = load_settings(pytestconfig.getoption("--atf-config"))
@@ -97,7 +119,10 @@ def settings(pytestconfig):
         cfg.reinstall_app = True
     if pytestconfig.getoption("--no-logcat"):
         cfg.capture_logcat = False
-    cfg.artifacts_dir = Path(cfg.artifacts_dir).absolute()
+    # Artifacts belong with the run that produced them; the configured
+    # artifacts_dir is only the fallback when file output is switched off.
+    run = run_dir(pytestconfig)
+    cfg.artifacts_dir = (run / "artifacts") if run else Path(cfg.artifacts_dir).absolute()
     cfg.artifacts_dir.mkdir(parents=True, exist_ok=True)
     return cfg
 
@@ -150,7 +175,9 @@ def device_state(adb):
 
 @pytest.fixture
 def artifact_dir(request, settings, device_serial):
-    name = ARTIFACT_SAFE.sub("_", request.node.name)[:120]
+    # The serial already names the parent folder, so drop it from the test name.
+    stem = _strip_device(request.node.name, _run_serials(request.config))
+    name = ARTIFACT_SAFE.sub("_", stem).strip("_")[:120] or "test"
     path = settings.artifacts_dir / ARTIFACT_SAFE.sub("_", device_serial) / name
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -403,14 +430,11 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     writer.write_line("")
     writer.write_line(f"Total: {tally}", bold=True)
 
-    report_root = config.getoption("--report-dir")
-    if not report_root:
+    run = run_dir(config)
+    if run is None:
         return
 
     started = getattr(config, "_atf_started", None) or datetime.now()
-    run_dir = Path(config.rootpath) / report_root / started.strftime("%Y-%m-%d_%H-%M-%S")
-    run_dir.mkdir(parents=True, exist_ok=True)
-
     text_body = [
         "Test report",
         f"Generated: {started:%Y-%m-%d %H:%M:%S}",
@@ -418,9 +442,9 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         "",
         *[text for _, text in lines],
     ]
-    (run_dir / "report.txt").write_text("\n".join(text_body) + "\n", encoding="utf-8")
+    (run / "report.txt").write_text("\n".join(text_body) + "\n", encoding="utf-8")
 
-    html_path = run_dir / "report.html"
+    html_path = run / "report.html"
     html_path.write_text(_render_html(config, started, totals), encoding="utf-8")
     writer.write_line(f"Report written to {html_path}")
 
