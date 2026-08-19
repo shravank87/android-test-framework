@@ -4,9 +4,9 @@ Written to <run>/artifacts/test_run.log. Device commands log themselves, so the
 file reads as a narrative of each test: the action taken, then its result.
 
     19:42:07.118  ── TEST test_wifi_is_connected
-    19:42:07.121  action  shell cmd wifi status
-    19:42:07.309  result  ok in 0.19s | Wifi is enabled
-    19:42:07.480  TEST PASSED  test_wifi_is_connected (0.36s)
+    19:42:07.121  shell cmd wifi status
+    19:42:07.309  ok in 0.19s | Wifi is enabled
+    19:42:07.480  TEST PASS  test_wifi_is_connected (0.36s)
 """
 import logging
 
@@ -58,17 +58,17 @@ def banner(message):
 
 
 def action(message):
-    LOGGER.info("action  %s", message)
+    LOGGER.info("%s", message)
 
 
 def result(message):
-    LOGGER.info("result  %s", message)
+    LOGGER.info("%s", message)
 
 
 def step(message):
     """A narrative step logged from inside a test."""
-    LOGGER.info("step    %s", message)
+    LOGGER.info("%s", message)
 
 
 def note(message):
-    LOGGER.info("        %s", message)
+    LOGGER.info("%s", message)
