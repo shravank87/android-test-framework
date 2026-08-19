@@ -311,14 +311,37 @@ def pytest_runtest_logreport(report):
 MAX_NAME = 72
 
 
-def _split_nodeid(nodeid):
-    """'tests/test_x.py::test_name[serial]' -> ('tests/test_x.py', 'test_name[serial]')
+def _run_serials(config):
+    serials = list(getattr(config, "_atf_serials", ([], None))[0])
+    return serials + ["no-device"]
+
+
+def _strip_device(name, serials):
+    """Drop the device parameter from a test id.
+
+    Tests are parametrised by device, so every id carries the serial. It is the
+    same for the whole run and already shown once in the header, so repeating it
+    on every row is noise. Handles ids parametrised by device alone
+    (`test_x[SERIAL]`) as well as device plus other params
+    (`test_x[SERIAL-STREAM_RING]`).
+    """
+    for serial in serials:
+        if not serial:
+            continue
+        name = name.replace(f"[{serial}-", "[")
+        name = name.replace(f"-{serial}]", "]")
+        name = name.replace(f"[{serial}]", "")
+    return name
+
+
+def _split_nodeid(nodeid, serials=()):
+    """'tests/test_x.py::test_name[serial]' -> ('tests/test_x.py', 'test_name')
 
     Parametrised ids can embed whole command dumps, so the bracketed part is
     shortened — the test name itself is never truncated.
     """
     path, _, rest = nodeid.partition("::")
-    name = rest.replace("::", " > ")
+    name = _strip_device(rest.replace("::", " > "), serials)
     if len(name) > MAX_NAME and "[" in name:
         base, _, params = name.partition("[")
         params = params.rstrip("]")
@@ -331,9 +354,10 @@ def _split_nodeid(nodeid):
 
 def _build_report(config):
     store = getattr(config, "_atf_results", {}) or {}
+    serials = _run_serials(config)
     suites = {}
     for nodeid, result in store.items():
-        path, name = _split_nodeid(nodeid)
+        path, name = _split_nodeid(nodeid, serials)
         suites.setdefault(path, []).append((name, result))
 
     lines = []
@@ -404,9 +428,10 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 def _render_html(config, started, totals):
     """A plain HTML page listing each suite, its test cases and their results."""
     store = getattr(config, "_atf_results", {}) or {}
+    serials = _run_serials(config)
     suites = {}
     for nodeid, result in store.items():
-        path, name = _split_nodeid(nodeid)
+        path, name = _split_nodeid(nodeid, serials)
         suites.setdefault(path, []).append((name, result))
 
     total = sum(totals.values())
@@ -422,7 +447,7 @@ def _render_html(config, started, totals):
             counts[result["outcome"]] += 1
         summary = ", ".join(f"{n} {k}" for k, n in counts.items() if n)
         rows.append(
-            f'<tr class="suite"><td colspan="4">{escape(path)}'
+            f'<tr class="suite"><td colspan="3">{escape(path)}'
             f'<span class="meta">{escape(summary)}</span></td></tr>'
         )
         for name, result in cases:
@@ -432,7 +457,6 @@ def _render_html(config, started, totals):
                 f"<tr>"
                 f'<td class="name">{escape(name)}</td>'
                 f'<td><span class="badge {outcome}">{OUTCOME_LABEL[outcome]}</span></td>'
-                f'<td class="num">{result["duration"]:.2f}s</td>'
                 f'<td class="reason">{escape(reason)}</td>'
                 f"</tr>"
             )
@@ -465,16 +489,18 @@ def _render_html(config, started, totals):
   .card.passed b {{ color: #0f7a63; }} .card.failed b {{ color: #c0392b; }}
   .card.error b {{ color: #c0392b; }} .card.skipped b {{ color: #6e7b78; }}
   .wrap {{ overflow-x: auto; }}
-  table {{ width: 100%; border-collapse: collapse; background: #fff;
+  /* Fixed layout keeps long monospace test names from forcing the table wider
+     than the page; the name and detail cells wrap instead. */
+  table {{ width: 100%; table-layout: fixed; border-collapse: collapse; background: #fff;
           border: 1px solid #dde5e3; border-radius: 4px; font-size: .88rem; }}
+  col.c-name {{ width: 55%; }} col.c-result {{ width: 11%; }} col.c-detail {{ width: 34%; }}
   th, td {{ text-align: left; padding: .5rem .75rem; border-bottom: 1px solid #eef2f1; }}
   th {{ background: #f1f5f4; font-size: .72rem; text-transform: uppercase;
        letter-spacing: .08em; color: #5d6b68; }}
   tr.suite td {{ background: #f1f5f4; font-weight: 600; font-family: ui-monospace, Menlo, monospace; }}
   tr.suite .meta {{ float: right; font-weight: 400; color: #5d6b68; font-family: inherit; }}
-  td.name {{ font-family: ui-monospace, Menlo, monospace; }}
-  td.num {{ text-align: right; font-variant-numeric: tabular-nums; color: #5d6b68; white-space: nowrap; }}
-  td.reason {{ color: #5d6b68; }}
+  td.name {{ font-family: ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }}
+  td.reason {{ color: #5d6b68; overflow-wrap: anywhere; }}
   .badge {{ display: inline-block; padding: .08rem .45rem; border-radius: 3px;
            font-size: .72rem; font-weight: 700; letter-spacing: .04em; }}
   .badge.passed {{ background: #e6f2ee; color: #0f6b57; }}
@@ -490,7 +516,8 @@ def _render_html(config, started, totals):
   <div class="cards">{cards}</div>
   <div class="wrap">
   <table>
-    <thead><tr><th>Test case</th><th>Result</th><th>Time</th><th>Detail</th></tr></thead>
+    <colgroup><col class="c-name"><col class="c-result"><col class="c-detail"></colgroup>
+    <thead><tr><th>Test case</th><th>Result</th><th>Detail</th></tr></thead>
     <tbody>
 {chr(10).join(rows)}
     </tbody>
