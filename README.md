@@ -1,5 +1,7 @@
 # atf — Android System Test Framework
 
+[![CI](https://github.com/shravank87/android-test-framework/actions/workflows/ci.yml/badge.svg)](https://github.com/shravank87/android-test-framework/actions/workflows/ci.yml)
+
 A pytest-based framework for testing the **Android system itself** on physical
 devices over adb — platform integrity, security posture, radios, power, thermal,
 memory, display, and audio. It is not an app-testing framework; nothing here
@@ -72,6 +74,24 @@ Produce a shareable report:
 ```bash
 pytest -m system --html=report.html --self-contained-html
 ```
+
+## Continuous integration
+
+[.github/workflows/ci.yml](.github/workflows/ci.yml) runs on every push and pull
+request to `main`, across Python 3.9, 3.11 and 3.12.
+
+Hosted runners have no Android device attached, so device-dependent tests skip by
+design and the offline parser suite carries the run — currently **38 tests
+executed, 69 skipped**. CI deliberately runs the *whole* suite rather than just
+the offline files: if a device test ever started erroring instead of skipping
+without hardware, that regression would surface here.
+
+A guard step fails the build if fewer than 20 tests actually execute, so a run
+cannot go green by silently skipping everything. A second job checks that every
+module imports and byte-compiles.
+
+To get real device coverage in CI you would need a self-hosted runner with a
+phone attached, or a cloud device farm.
 
 ## Fixtures
 

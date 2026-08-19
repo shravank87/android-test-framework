@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.11', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      # No Android device is attached to a hosted runner, so device-dependent
+      # tests skip by design. Running the whole suite (rather than only the
+      # offline files) also exercises that skip path — if device tests ever
+      # started erroring instead of skipping without hardware, CI would catch it.
+      - name: Run test suite
+        run: pytest -q --junitxml=results-${{ matrix.python-version }}.xml
+
+      - name: Assert offline tests actually ran
+        shell: bash
+        run: |
+          python - <<'PY'
+          import glob, sys, xml.etree.ElementTree as ET
+          suite = ET.parse(glob.glob("results-*.xml")[0]).getroot()
+          suite = suite[0] if suite.tag == "testsuites" else suite
+          total = int(suite.get("tests", 0))
+          skipped = int(suite.get("skipped", 0))
+          executed = total - skipped
+          print(f"{executed} executed, {skipped} skipped, {total} collected")
+          # Guards against a green run where everything silently skipped.
+          if executed < 20:
+              sys.exit(f"only {executed} tests executed; expected the offline suite (>=20)")
+          PY
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.python-version }}
+          path: results-*.xml
+          if-no-files-found: warn
+
+  lint:
+    name: Import and packaging check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Every module imports cleanly
+        run: |
+          python -c "
+          import importlib
+          mods = ['adb','config','driver','exceptions','instrumentation',
+                  'logcat','plugin','screen','state','system','ui']
+          for m in mods:
+              importlib.import_module(f'atf.{m}')
+          import atf
+          print('imported', len(mods), 'modules;', len(atf.__all__), 'public names')
+          "
+
+      - name: Byte-compile all sources
+        run: python -m compileall -q atf tests

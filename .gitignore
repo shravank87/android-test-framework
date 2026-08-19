@@ -14,7 +14,7 @@ htmlcov/
 # These contain device and account details and must never be committed.
 artifacts/
 report.html
-results.xml
+results*.xml
 
 # Editor / OS
 .DS_Store
