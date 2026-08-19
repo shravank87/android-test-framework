@@ -15,6 +15,48 @@ import pytest
 VALID_PRIVATE_DNS = {"off", "opportunistic", "hostname"}
 
 
+def connect_to(system, network, timeout=45):
+    """Associate with a configured network. Returns True once connected."""
+    args = ["cmd", "wifi", "connect-network", network.ssid, network.security]
+    if not network.is_open:
+        args.append(network.password)
+    system.adb.shell(*args, check=False)
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        info = system.wifi_info()
+        if info is not None and info.ssid == network.ssid:
+            return True
+        time.sleep(2)
+    return False
+
+
+@pytest.fixture(scope="module", autouse=True)
+def wifi_from_testdata(system, test_data):
+    """Start the Wi-Fi tests from no saved networks, then connect from testdata.
+
+    Saved networks are cleared once before this module runs, so nothing here
+    depends on how the device happened to be configured beforehand. The tests
+    that need a link get one built from config/testdata.yaml.
+
+    Without that file the device is left alone: its credentials cannot be read
+    back, so forgetting them would strand it with no way to reconnect.
+    """
+    if not test_data.available:
+        yield
+        return
+
+    network = test_data.wifi_network("default")
+    if system.radios().wifi_enabled:
+        system.forget_all_networks()
+        time.sleep(2)
+        connect_to(system, network)
+    yield
+    # Leave the device on its network for whatever runs next.
+    if not system.wifi_is_connected():
+        connect_to(system, network)
+
+
 @pytest.fixture
 def forgotten_networks(system, test_data, step):
     """Clear every saved network, then restore the configured one afterwards.
@@ -39,29 +81,35 @@ def forgotten_networks(system, test_data, step):
     yield network
 
     # Put the device back on its network whatever the test did.
-    if not any(n.ssid == network.ssid for n in system.saved_networks()):
+    if not system.wifi_is_connected():
         step(f"restoring {network.ssid}")
-        args = ["cmd", "wifi", "connect-network", network.ssid, network.security]
-        if not network.is_open:
-            args.append(network.password)
-        system.adb.shell(*args, check=False)
-
-    deadline = time.time() + 45
-    while time.time() < deadline:
-        info = system.wifi_info()
-        if info is not None and info.ssid == network.ssid:
-            break
-        time.sleep(2)
+        connect_to(system, network)
     step("device restored to its network")
 
 
 @pytest.fixture
-def online(system):
-    """Skip a test when the device has no usable network."""
+def online(system, test_data):
+    """Guarantee a Wi-Fi link, connecting from testdata if there is not one.
+
+    Saved networks are cleared before this module, so a test needing a link
+    establishes it from config/testdata.yaml rather than relying on whatever the
+    device was joined to.
+    """
     if system.radios().airplane_mode:
         pytest.skip("airplane mode is on")
-    if not system.wifi_is_connected():
-        pytest.skip("not associated with a Wi-Fi network")
+    if system.wifi_is_connected():
+        return system
+
+    if not test_data.available:
+        pytest.skip("not associated, and no config/testdata.yaml to connect with")
+    if not system.radios().wifi_enabled:
+        pytest.skip("Wi-Fi is disabled on this device")
+
+    network = test_data.wifi_network("default")
+    assert connect_to(system, network), (
+        f"could not connect to {network.ssid} from test data; "
+        "check the SSID, security type and passphrase in config/testdata.yaml"
+    )
     return system
 
 
