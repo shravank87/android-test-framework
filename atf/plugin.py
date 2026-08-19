@@ -104,7 +104,9 @@ def run_dir(config):
         return cached or None
 
     report_root = config.getoption("--report-dir")
-    if not report_root:
+    # --no-report means no files at all. Without this it still created a run
+    # folder holding only a log, which looks like a run whose report vanished.
+    if not report_root or config.getoption("--no-report"):
         config._atf_run_dir = False
         return None
 
