@@ -654,6 +654,18 @@ class System:
         return parse_stream_volume(self.adb.shell("dumpsys", "audio"), stream)
 
     def screen_on(self):
+        """Whether the display is awake.
+
+        The grep runs on the device: `dumpsys power` is ~1200 lines and 87KB,
+        and pulling all of it across adb to read one field bloated every run log
+        that touched a UI test. `-m1` is avoided deliberately — it makes grep
+        exit early and dumpsys then reports a broken pipe.
+        """
+        out = self.adb.shell("dumpsys power | grep mWakefulness", check=False)
+        match = re.search(r"mWakefulness=(\w+)", out)
+        if match:
+            return match.group(1) == "Awake"
+        # Fall back to the full dump if the device's grep behaved differently.
         out = self.adb.shell("dumpsys", "power", check=False)
         match = re.search(r"mWakefulness=(\w+)", out)
         return match.group(1) == "Awake" if match else None
