@@ -66,7 +66,7 @@ def test_connected_network_is_listed(wifi_screen, online, step):
 
 @pytest.mark.system
 @pytest.mark.mutates
-def test_connects_through_the_ui(ui, adb, system, forgotten_networks, step):
+def test_wifi_connect(ui, adb, system, forgotten_networks, step):
     """Join a network the way a person does: tap it, type the password, connect.
 
     Saved networks are cleared first so Settings actually prompts — otherwise the

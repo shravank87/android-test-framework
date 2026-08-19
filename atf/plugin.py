@@ -199,7 +199,13 @@ def test_data(pytestconfig):
     skip when it is absent, so the suite still runs on a machine without one.
     """
     from .testdata import load
-    return load(pytestconfig.getoption("--testdata"))
+    # Resolve against the project root, not the working directory: pytest can be
+    # invoked from anywhere, and a relative default would silently find nothing
+    # and skip every test that needs credentials.
+    path = Path(pytestconfig.getoption("--testdata"))
+    if not path.is_absolute():
+        path = Path(pytestconfig.rootpath) / path
+    return load(path)
 
 
 @pytest.fixture

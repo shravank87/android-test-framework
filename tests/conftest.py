@@ -59,8 +59,8 @@ def forgotten_networks(system, test_data, step):
     credentials were ever exercised.
     """
     if not test_data.available:
-        pytest.skip("no config/testdata.yaml; refusing to forget networks that "
-                    "could not then be restored")
+        pytest.skip(f"no test data at {test_data.path}; refusing to forget "
+                    "networks that could not then be restored")
 
     network = test_data.wifi_network("default")
     removed = system.forget_all_networks()
@@ -93,7 +93,8 @@ def online(system, test_data):
             reason = "airplane mode is on, so Wi-Fi is down"
         pytest.skip(reason)
     if not test_data.available:
-        pytest.skip("not associated, and no config/testdata.yaml to connect with")
+        pytest.skip(f"not associated, and no test data at {test_data.path} "
+                    "to connect with")
 
     network = test_data.wifi_network("default")
     assert connect_to(system, network), (
