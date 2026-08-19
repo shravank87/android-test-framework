@@ -28,7 +28,7 @@ def _clean_slate(wifi_clean_slate):
 
 @pytest.mark.system
 def test_wifi_is_enabled(system):
-    enabled = system.radios().wifi_enabled
+    enabled = system.wifi_enabled()
     assert enabled is not None, "device does not report wifi_on"
     if not enabled:
         pytest.skip("Wi-Fi is disabled on this device")
@@ -86,7 +86,7 @@ def test_wifi_operates_on_a_known_band(online):
 @pytest.mark.system
 def test_wifi_scan_finds_networks(system, step):
     """Scan for access points and check every row is well formed."""
-    if not system.radios().wifi_enabled:
+    if not system.wifi_enabled():
         pytest.skip("Wi-Fi is disabled; scanning is unavailable")
 
     step("triggering a Wi-Fi scan")
@@ -137,7 +137,7 @@ def test_connects_to_configured_network(system, forgotten_networks, step):
     Saved networks are cleared first, so this is a genuine connection rather
     than an assertion about a link that already existed.
     """
-    if not system.radios().wifi_enabled:
+    if not system.wifi_enabled():
         pytest.skip("Wi-Fi is disabled on this device")
 
     network = forgotten_networks
@@ -182,7 +182,7 @@ def test_connecting_saves_the_network(system, forgotten_networks, step):
 @pytest.mark.system
 @pytest.mark.mutates
 def test_disabling_wifi_takes_effect(system, device_state):
-    if not system.radios().wifi_enabled:
+    if not system.wifi_enabled():
         pytest.skip("Wi-Fi already disabled")
 
     device_state.set_wifi(False)

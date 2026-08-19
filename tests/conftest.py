@@ -40,7 +40,7 @@ def wifi_clean_slate(system, test_data):
         return
 
     network = test_data.wifi_network("default")
-    if system.radios().wifi_enabled:
+    if system.wifi_enabled():
         system.forget_all_networks()
         time.sleep(2)
         connect_to(system, network)
@@ -77,16 +77,23 @@ def forgotten_networks(system, test_data, step):
 
 @pytest.fixture
 def online(system, test_data):
-    """Guarantee a Wi-Fi link, connecting from test data if there is not one."""
-    if system.radios().airplane_mode:
-        pytest.skip("airplane mode is on")
+    """Guarantee a Wi-Fi link, connecting from test data if there is not one.
+
+    Checks are ordered so the common case — already associated — asks the device
+    about nothing but Wi-Fi. Airplane mode is only consulted to explain why a
+    link is missing, and is read on its own rather than through radios(), which
+    would also query Bluetooth and mobile data.
+    """
     if system.wifi_is_connected():
         return system
 
+    if not system.wifi_enabled():
+        reason = "Wi-Fi is disabled on this device"
+        if system.airplane_mode():
+            reason = "airplane mode is on, so Wi-Fi is down"
+        pytest.skip(reason)
     if not test_data.available:
         pytest.skip("not associated, and no config/testdata.yaml to connect with")
-    if not system.radios().wifi_enabled:
-        pytest.skip("Wi-Fi is disabled on this device")
 
     network = test_data.wifi_network("default")
     assert connect_to(system, network), (

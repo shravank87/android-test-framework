@@ -531,7 +531,24 @@ class System:
 
     # --- radios / connectivity ---
 
+    def wifi_enabled(self):
+        """Read just the Wi-Fi radio.
+
+        Prefer this over radios().wifi_enabled in Wi-Fi-only tests: radios()
+        also queries airplane mode, Bluetooth and mobile data, which makes a
+        Wi-Fi test look as though it inspects radios it has no interest in.
+        """
+        return self.setting_bool("global", "wifi_on")
+
+    def airplane_mode(self):
+        return self.setting_bool("global", "airplane_mode_on")
+
+    def bluetooth_enabled(self):
+        return self.setting_bool("global", "bluetooth_on")
+
     def radios(self):
+        """All four radios at once. Use the single-radio readers when a test
+        only cares about one."""
         return RadioState(
             airplane_mode=self.setting_bool("global", "airplane_mode_on"),
             wifi_enabled=self.setting_bool("global", "wifi_on"),
