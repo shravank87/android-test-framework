@@ -1,6 +1,8 @@
 import subprocess
 import threading
 
+from . import runlog
+
 
 class LogcatRecorder:
     """Streams logcat from a device into a file for the duration of a test."""
@@ -27,8 +29,12 @@ class LogcatRecorder:
         return self
 
     def _pump(self):
+        # adbd logs every shell command it runs, so a passphrase passed to
+        # `cmd wifi connect-network` reaches logcat in plain text. Redaction has
+        # to happen here as well as in the run log, because this stream comes
+        # straight off the device.
         for line in self._proc.stdout:
-            self._fh.write(line)
+            self._fh.write(runlog.redact(line))
         self._fh.flush()
 
     def stop(self):

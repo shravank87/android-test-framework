@@ -197,6 +197,56 @@ def test_mobile_data_is_available_when_a_sim_is_present(system):
 
 @pytest.mark.system
 @pytest.mark.mutates
+def test_connects_to_configured_network(system, adb, test_data, step):
+    """Connect to the network named in config/testdata.yaml.
+
+    The SSID, security type and passphrase all come from that file, so nothing
+    here is hard-coded and the password never appears in the log — it is
+    registered as a secret when the file loads.
+    """
+    if not test_data.available:
+        pytest.skip("no config/testdata.yaml; see config/testdata.example.yaml")
+    if not system.radios().wifi_enabled:
+        pytest.skip("Wi-Fi is disabled on this device")
+
+    network = test_data.wifi_network("default")
+    step(f"connecting to {network.ssid} ({network.security})")
+
+    args = ["cmd", "wifi", "connect-network", network.ssid, network.security]
+    if not network.is_open:
+        args.append(network.password)
+    adb.shell(*args, check=False)
+
+    deadline = time.time() + 45
+    info = None
+    while time.time() < deadline:
+        info = system.wifi_info()
+        if info is not None and info.ssid == network.ssid:
+            break
+        time.sleep(2)
+
+    assert info is not None, f"not associated with any network after connecting"
+    assert info.ssid == network.ssid, (
+        f"associated with {info.ssid!r}, expected {network.ssid!r}"
+    )
+    step(f"associated at {info.rssi} dBm on {info.band}")
+
+    # Associating is not the same as reaching the internet.
+    deadline = time.time() + 45
+    active = None
+    while time.time() < deadline:
+        active = system.active_network()
+        if active is not None and active.validated:
+            break
+        time.sleep(2)
+    assert active is not None and active.validated, (
+        "connected to the network but it never validated"
+    )
+    step("network validated")
+
+
+@pytest.mark.system
+@pytest.mark.mutates
 def test_disabling_wifi_takes_effect(system, device_state):
     if not system.radios().wifi_enabled:
         pytest.skip("Wi-Fi already disabled")
