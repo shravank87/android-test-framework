@@ -12,7 +12,8 @@ requires an APK.
 | Suite | Covers |
 |---|---|
 | [test_platform_security.py](tests/test_platform_security.py) | SELinux enforcing, bootloader lock, verified boot, encryption, debuggable/user build, security-patch age, root check |
-| [test_connectivity.py](tests/test_connectivity.py) | Airplane/Wi-Fi/Bluetooth/mobile-data state, association quality, scanning, connecting to a configured network, internet reachability, DNS, radio toggles |
+| [test_wifi.py](tests/test_wifi.py) | Association quality, signal, band, scanning, saved networks, connecting to the network in test data. Starts from no saved networks |
+| [test_connectivity.py](tests/test_connectivity.py) | The active network whichever transport carries it: validation, addressing, DNS, reachability, SIM state, airplane/Bluetooth toggles |
 | [test_power_thermal.py](tests/test_power_thermal.py) | Battery level/health/temperature/voltage, charging coherence, thermal throttling, memory pressure, load average |
 | [test_display_audio.py](tests/test_display_audio.py) | Resolution/density, brightness, screen timeout, rotation, per-stream volumes |
 | [test_device_smoke.py](tests/test_device_smoke.py) | Boot state, screenshots, foreground-activity detection |
@@ -55,7 +56,7 @@ No root required — everything uses shell-user permissions.
 
 ## Running
 
-Everything, on every connected device (109 tests):
+Everything, on every connected device (113 tests):
 
 ```bash
 pytest
@@ -67,16 +68,16 @@ Read-only checks only — safe on a phone you are using:
 pytest -m "system and not mutates"
 ```
 
-One file:
+One suite:
 
 ```bash
-pytest tests/test_connectivity.py
+pytest tests/test_wifi.py
 ```
 
 One test:
 
 ```bash
-pytest tests/test_connectivity.py::test_wifi_scan_finds_networks
+pytest tests/test_wifi.py::test_wifi_scan_finds_networks
 ```
 
 Anything matching a keyword, across files:
@@ -98,8 +99,8 @@ failure, and `-n auto` to run devices in parallel.
 
 | Marker | Tests | Meaning |
 |---|---|---|
-| `system` | 59 | System-level checks |
-| `mutates` | 9 | Changes device state, restored in teardown |
+| `system` | 63 | System-level checks |
+| `mutates` | 10 | Changes device state, restored in teardown |
 | `adb` | 7 | Plain device/shell automation |
 
 ### Choosing devices
@@ -185,7 +186,7 @@ request to `main`, across Python 3.9, 3.11 and 3.12.
 
 Hosted runners have no Android device attached, so device-dependent tests skip by
 design and the offline parser suite carries the run — currently **38 tests
-executed, 71 skipped**. CI deliberately runs the *whole* suite rather than just
+executed, 75 skipped**. CI deliberately runs the *whole* suite rather than just
 the offline files: if a device test ever started erroring instead of skipping
 without hardware, that regression would surface here.
 
