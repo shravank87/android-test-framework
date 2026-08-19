@@ -22,6 +22,8 @@ results*.xml
 .vscode/
 *.swp
 Results/
+# Runs Claude performs on its own; Results/ holds runs you asked for.
+ClaudeRuns/
 
 # Local test data: real SSIDs, passwords and account details.
 # Never commit. Copy testdata.example.yaml to testdata.yaml and fill it in.

@@ -152,7 +152,12 @@ Commands are logged verbatim, credentials included — pass `--redact-secrets` t
 mask them before sharing a run folder. A bugreport is taken once at the end of a
 run that had failures, not per failing test: each costs about 70s and 10MB.
 
-`Results/` is gitignored.
+`Results/` is gitignored. A second folder, `ClaudeRuns/`, keeps runs performed by
+an assistant separate, so `Results/` only holds runs you asked for:
+
+```bash
+pytest tests/test_wifi.py --report-dir ClaudeRuns
+```
 
 ## Test data
 
