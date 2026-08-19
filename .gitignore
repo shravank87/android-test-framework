@@ -21,3 +21,4 @@ results*.xml
 .idea/
 .vscode/
 *.swp
+test-report.txt

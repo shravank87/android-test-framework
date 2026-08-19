@@ -26,6 +26,10 @@ def pytest_addoption(parser):
                     help="Reinstall the app under test at session start.")
     group.addoption("--no-logcat", action="store_true", default=False,
                     help="Disable per-test logcat capture.")
+    group.addoption("--no-report", action="store_true", default=False,
+                    help="Suppress the end-of-run test report.")
+    group.addoption("--report-file", action="store", default="test-report.txt",
+                    help="Where to write the test report. Empty string disables the file.")
 
 
 def pytest_configure(config):
@@ -35,6 +39,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "system: read-only assertion about system state")
     config.addinivalue_line("markers", "mutates: changes device state; restored in teardown")
     config.addinivalue_line("markers", "min_sdk(level): skip on devices below this API level")
+    _ACTIVE["config"] = config
 
 
 def _resolve_serials(config):
@@ -249,6 +254,137 @@ def _capture_adb_screenshot(item):
             device.screenshot(str(Path(target) / "failure.png"))
     except Exception:
         pass
+
+
+# --- end-of-run report -------------------------------------------------------
+
+OUTCOME_ORDER = {"failed": 0, "error": 1, "skipped": 2, "passed": 3}
+OUTCOME_LABEL = {"passed": "PASS", "failed": "FAIL", "error": "ERROR",
+                 "skipped": "SKIP"}
+
+# pytest_runtest_logreport does not receive `config`, so it is captured here
+# during configuration.
+_ACTIVE = {}
+
+
+def _record(config, nodeid, outcome, duration, reason=""):
+    """Keep the most significant outcome seen for a test across its phases."""
+    store = getattr(config, "_atf_results", None)
+    if store is None:
+        store = config._atf_results = {}
+    previous = store.get(nodeid)
+    if previous is None or OUTCOME_ORDER[outcome] < OUTCOME_ORDER[previous["outcome"]]:
+        store[nodeid] = {"outcome": outcome, "duration": duration, "reason": reason}
+    else:
+        previous["duration"] += duration
+
+
+def pytest_runtest_logreport(report):
+    config = _ACTIVE.get("config")
+    if config is None:
+        return
+    # Skips are checked first: pytest.skip() inside a test body produces a
+    # `call` report that is skipped-but-not-passed, which a when=="call" branch
+    # would otherwise record as a failure.
+    if report.skipped:
+        outcome = "skipped"
+    elif report.when == "call":
+        outcome = "passed" if report.passed else "failed"
+    elif report.failed:
+        outcome = "error"          # setup/teardown blew up
+    else:
+        return                     # uneventful setup/teardown
+    reason = ""
+    if outcome == "skipped" and isinstance(report.longrepr, tuple):
+        reason = report.longrepr[2].replace("Skipped: ", "")
+    elif outcome in ("failed", "error"):
+        reason = str(report.longrepr).strip().splitlines()[-1] if report.longrepr else ""
+    _record(config, report.nodeid, outcome, getattr(report, "duration", 0.0), reason)
+
+
+MAX_NAME = 72
+
+
+def _split_nodeid(nodeid):
+    """'tests/test_x.py::test_name[serial]' -> ('tests/test_x.py', 'test_name[serial]')
+
+    Parametrised ids can embed whole command dumps, so the bracketed part is
+    shortened — the test name itself is never truncated.
+    """
+    path, _, rest = nodeid.partition("::")
+    name = rest.replace("::", " > ")
+    if len(name) > MAX_NAME and "[" in name:
+        base, _, params = name.partition("[")
+        params = params.rstrip("]")
+        room = max(8, MAX_NAME - len(base) - 5)
+        if len(params) > room:
+            params = params[:room] + "..."
+        name = f"{base}[{params}]"
+    return path, name
+
+
+def _build_report(config):
+    store = getattr(config, "_atf_results", {}) or {}
+    suites = {}
+    for nodeid, result in store.items():
+        path, name = _split_nodeid(nodeid)
+        suites.setdefault(path, []).append((name, result))
+
+    lines = []
+    totals = {"passed": 0, "failed": 0, "error": 0, "skipped": 0}
+    for path in sorted(suites):
+        cases = suites[path]
+        counts = {"passed": 0, "failed": 0, "error": 0, "skipped": 0}
+        for _, result in cases:
+            counts[result["outcome"]] += 1
+            totals[result["outcome"]] += 1
+        elapsed = sum(r["duration"] for _, r in cases)
+        summary = ", ".join(f"{n} {k}" for k, n in counts.items() if n)
+        lines.append((None, f"{path}  ({summary}, {elapsed:.2f}s)"))
+        for name, result in cases:
+            label = OUTCOME_LABEL[result["outcome"]]
+            line = f"  {label:<5}  {name}  ({result['duration']:.2f}s)"
+            if result["reason"] and result["outcome"] != "passed":
+                line += f"\n           {result['reason'][:100]}"
+            lines.append((result["outcome"], line))
+    return lines, totals
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    if config.getoption("--no-report"):
+        return
+    lines, totals = _build_report(config)
+    if not lines:
+        return
+
+    writer = terminalreporter
+    writer.write_sep("=", "test report", bold=True)
+    for outcome, text in lines:
+        if outcome is None:
+            writer.write_line(text, bold=True)
+        elif outcome == "passed":
+            writer.write_line(text, green=True)
+        elif outcome == "skipped":
+            writer.write_line(text, yellow=True)
+        else:
+            writer.write_line(text, red=True)
+
+    tally = "  ".join(f"{n} {k}" for k, n in totals.items() if n) or "no tests run"
+    writer.write_line("")
+    writer.write_line(f"Total: {tally}", bold=True)
+
+    target = config.getoption("--report-file")
+    if target:
+        path = Path(config.rootpath) / target
+        header = [
+            "Test report",
+            f"Generated: {datetime.now():%Y-%m-%d %H:%M:%S}",
+            f"Result:    {tally}",
+            "",
+        ]
+        body = [text for _, text in lines]
+        path.write_text("\n".join(header + body) + "\n", encoding="utf-8")
+        writer.write_line(f"Report written to {path}")
 
 
 def pytest_report_header(config):
