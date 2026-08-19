@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from . import runlog
 from .adb import Adb, list_devices
 from .config import load_settings
 from .exceptions import NoDeviceError
@@ -29,11 +30,10 @@ def pytest_addoption(parser):
                     help="Disable per-test logcat capture.")
     group.addoption("--no-report", action="store_true", default=False,
                     help="Suppress the end-of-run test report.")
-    group.addoption("--bugreport", action="store", default="first",
-                    choices=("first", "all", "never"),
-                    help="Capture an adb bugreport on failure: on the first "
-                         "failure per device (default), on every failure, or never. "
-                         "Each takes roughly 70s and 10MB.")
+    group.addoption("--bugreport", action="store", default="on-failure",
+                    choices=("on-failure", "never"),
+                    help="Capture an adb bugreport once at the end of the run if "
+                         "anything failed (default), or never. Roughly 70s and 10MB.")
     group.addoption("--report-dir", action="store", default="Results",
                     help="Root directory for timestamped run results. "
                          "Empty string writes no files (terminal summary only).")
@@ -179,6 +179,16 @@ def device_state(adb):
 
 
 @pytest.fixture
+def step():
+    """Log a narrative step from inside a test into test_run.log.
+
+        def test_x(system, step):
+            step("reading radio state")
+    """
+    return runlog.step
+
+
+@pytest.fixture
 def artifact_dir(request, settings, device_serial):
     # The serial already names the parent folder, so drop it from the test name.
     stem = _strip_device(request.node.name, _run_serials(request.config))
@@ -285,43 +295,39 @@ def pytest_runtest_makereport(item, call):
     if result.when == "call" and result.failed:
         item.stash[_FAILED_KEY] = True
         _capture_adb_screenshot(item)
-        _capture_bugreport(item)
 
 
-def _capture_bugreport(item):
-    """Capture a device bugreport for a failing test.
+def _capture_bugreport(config, writer, totals):
+    """Take one bugreport per device at the end of a run that had failures.
 
-    A bugreport is a whole-device snapshot costing ~70s and ~10MB, and repeat
-    captures within one run describe near-identical state, so the default takes
-    one per device per run.
+    A bugreport is a whole-device snapshot costing ~70s and ~10MB, so it is
+    taken once after the suite finishes rather than per failing test.
     """
-    mode = item.config.getoption("--bugreport")
-    if mode == "never":
+    if config.getoption("--bugreport") == "never":
         return
-    device = item.funcargs.get("adb")
-    target = _artifact_dir_of(item)
-    if device is None or target is None:
+    if not (totals.get("failed") or totals.get("error")):
         return
 
-    taken = getattr(item.config, "_atf_bugreports", None)
-    if taken is None:
-        taken = item.config._atf_bugreports = set()
-    if mode == "first" and device.serial in taken:
+    serials, _ = getattr(config, "_atf_serials", ([], None))
+    run = run_dir(config)
+    if not serials or run is None:
         return
-    taken.add(device.serial)
 
-    reporter = item.config.pluginmanager.get_plugin("terminalreporter")
-    if reporter:
-        reporter.write_line(
-            f"\ncapturing bugreport for {item.name} (~70s)...", yellow=True)
-    try:
-        path = device.bugreport(Path(target) / "bugreport.zip")
-        size_mb = Path(path).stat().st_size / (1024 * 1024)
-        if reporter:
-            reporter.write_line(f"bugreport saved ({size_mb:.1f}MB)", yellow=True)
-    except Exception as exc:
-        if reporter:
-            reporter.write_line(f"bugreport failed: {exc}", red=True)
+    for serial in serials:
+        target = run / "artifacts" / ARTIFACT_SAFE.sub("_", serial) / "bugreport.zip"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        writer.write_line(f"run had failures - capturing bugreport for {serial} "
+                          f"(~70s)...", yellow=True)
+        runlog.banner(f"CAPTURING BUGREPORT for {serial}")
+        try:
+            path = Adb(serial).bugreport(target)
+            size_mb = Path(path).stat().st_size / (1024 * 1024)
+            writer.write_line(f"bugreport saved to {path} ({size_mb:.1f}MB)",
+                              yellow=True)
+            runlog.note(f"bugreport saved ({size_mb:.1f}MB)")
+        except Exception as exc:
+            writer.write_line(f"bugreport failed: {exc}", red=True)
+            runlog.note(f"bugreport failed: {exc}")
 
 
 def _capture_adb_screenshot(item):
@@ -385,6 +391,11 @@ def pytest_runtest_logreport(report):
         errors = [ln[2:].strip() for ln in detail if ln.startswith("E ")]
         reason = errors[0] if errors else detail[-1].strip()
     _record(config, report.nodeid, outcome, getattr(report, "duration", 0.0), reason)
+
+    # Log the verdict once the test body has run (or once setup decided its fate).
+    if runlog.enabled() and (report.when == "call" or outcome in ("skipped", "error")):
+        _, name = _split_nodeid(report.nodeid, _run_serials(config))
+        _log_outcome(report, name, outcome, reason)
 
 
 MAX_NAME = 72
@@ -499,6 +510,10 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     html_path = run / "report.html"
     html_path.write_text(_render_html(config, started, totals), encoding="utf-8")
     writer.write_line(f"Report written to {html_path}")
+    if runlog.enabled():
+        writer.write_line(f"Run log at {run / 'artifacts' / 'test_run.log'}")
+
+    _capture_bugreport(config, writer, totals)
 
 
 def _render_html(config, started, totals):
@@ -619,3 +634,42 @@ def pytest_report_header(config):
 
 def pytest_sessionstart(session):
     session.config._atf_started = datetime.now()
+    run = run_dir(session.config)
+    if run is None:
+        return
+    artifacts = run / "artifacts"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    runlog.configure(artifacts / "test_run.log")
+    runlog.banner(f"RUN STARTED {session.config._atf_started:%Y-%m-%d %H:%M:%S}")
+
+
+def pytest_unconfigure(config):
+    """Close the run log here, not in sessionfinish.
+
+    pytest_terminal_summary — which writes the reports and takes the end-of-run
+    bugreport — is driven from the terminal reporter's own sessionfinish, and
+    that runs after this plugin's. Closing the log there left it shut before
+    those steps could use it.
+    """
+    if runlog.enabled():
+        runlog.banner(f"RUN FINISHED {datetime.now():%Y-%m-%d %H:%M:%S}")
+        runlog.close()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_protocol(item, nextitem):
+    """Bracket each test in the run log so its actions are attributable."""
+    if runlog.enabled():
+        runlog.banner(f"TEST {_strip_device(item.name, _run_serials(item.config))}")
+    yield
+
+
+def _log_outcome(report, name, outcome, reason):
+    """Record a test's verdict in the run log.
+
+    Deliberately not named with a pytest_ prefix: pluggy treats any such
+    module-level function as a hook implementation and rejects unknown names.
+    """
+    label = OUTCOME_LABEL[outcome]
+    line = f"TEST {label}  {name} ({report.duration:.2f}s)"
+    runlog.LOGGER.info(line if not reason else f"{line} | {runlog.condense(reason)}")

@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import runlog
 from .exceptions import AdbError, AdbTimeout, NoDeviceError
 
 DEFAULT_TIMEOUT = 60
@@ -83,7 +84,25 @@ class Adb:
 
     def run(self, *args, timeout=None, check=True):
         cmd = [self._binary, "-s", self.serial, *(str(a) for a in args)]
-        proc = _run(cmd, timeout or self.timeout)
+        printable = " ".join(str(a) for a in args)
+        if runlog.enabled():
+            runlog.action(printable)
+        started = time.time()
+        try:
+            proc = _run(cmd, timeout or self.timeout)
+        except AdbTimeout as exc:
+            if runlog.enabled():
+                runlog.result(f"TIMEOUT after {time.time() - started:.2f}s")
+            raise exc
+        elapsed = time.time() - started
+        if runlog.enabled():
+            if proc.returncode == 0:
+                runlog.result(f"ok in {elapsed:.2f}s | {runlog.condense(proc.stdout)}")
+            else:
+                runlog.result(
+                    f"exit {proc.returncode} in {elapsed:.2f}s | "
+                    f"{runlog.condense(proc.stderr or proc.stdout)}"
+                )
         if check and proc.returncode != 0:
             raise AdbError(cmd, proc.returncode, proc.stdout, proc.stderr)
         return proc
