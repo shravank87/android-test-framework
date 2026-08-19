@@ -1,0 +1,29 @@
+# Template for config/testdata.yaml — copy this file, then fill in real values.
+#
+#     cp config/testdata.example.yaml config/testdata.yaml
+#
+# testdata.yaml is gitignored and must never be committed: it holds real network
+# names, passwords and account details. This example file is committed and must
+# only ever contain placeholders.
+#
+# Passwords loaded from testdata.yaml are registered with the run log and masked
+# wherever they would otherwise appear, including inside the adb command that
+# uses them.
+
+wifi:
+  # Key by a name your tests refer to, e.g. test_data.wifi_network("default").
+  default:
+    ssid: "YOUR_NETWORK_NAME"
+    password: "YOUR_NETWORK_PASSWORD"
+    security: wpa2        # wpa2 | wpa3 | wep | open
+    hidden: false
+
+  # Add as many as you need.
+  guest:
+    ssid: "YOUR_GUEST_NETWORK"
+    password: "YOUR_GUEST_PASSWORD"
+    security: wpa2
+
+# Anything under `secrets` is masked in the run log the same way.
+secrets: {}
+  # example_token: "REPLACE_ME"

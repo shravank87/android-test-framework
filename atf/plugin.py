@@ -30,6 +30,9 @@ def pytest_addoption(parser):
                     help="Disable per-test logcat capture.")
     group.addoption("--no-report", action="store_true", default=False,
                     help="Suppress the end-of-run test report.")
+    group.addoption("--testdata", action="store", default="config/testdata.yaml",
+                    help="Path to the local test data file (networks, credentials). "
+                         "Gitignored; see config/testdata.example.yaml.")
     group.addoption("--bugreport", action="store", default="on-failure",
                     choices=("on-failure", "never"),
                     help="Capture an adb bugreport once at the end of the run if "
@@ -178,6 +181,21 @@ def device_state(adb):
     guard = StateGuard(adb)
     yield guard
     guard.restore()
+
+
+@pytest.fixture(scope="session")
+def test_data(pytestconfig):
+    """Local test data: networks, credentials and anything else tests need.
+
+        def test_connects(test_data):
+            net = test_data.wifi_network("default")
+            ...  # net.ssid, net.password
+
+    Reads config/testdata.yaml, which is gitignored. Tests needing it should
+    skip when it is absent, so the suite still runs on a machine without one.
+    """
+    from .testdata import load
+    return load(pytestconfig.getoption("--testdata"))
 
 
 @pytest.fixture

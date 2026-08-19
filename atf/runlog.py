@@ -12,8 +12,34 @@ import logging
 
 LOGGER = logging.getLogger("atf.run")
 CONTINUATION_INDENT = "    "
+REDACTED = "***REDACTED***"
 
 _handler = None
+_secrets = set()
+
+
+def register_secret(value):
+    """Mask this value everywhere the log would otherwise print it.
+
+    The log records full commands, so a password passed to `cmd wifi
+    connect-network` would be written verbatim without this.
+    """
+    text = str(value or "")
+    if len(text) >= 4:          # too short to mask without mangling real output
+        _secrets.add(text)
+
+
+def clear_secrets():
+    _secrets.clear()
+
+
+def redact(text):
+    if not text or not _secrets:
+        return text
+    result = str(text)
+    for secret in _secrets:
+        result = result.replace(secret, REDACTED)
+    return result
 
 
 def configure(path):
@@ -54,7 +80,7 @@ def block(text):
     """
     if text is None:
         return ""
-    body = str(text).rstrip("\n")
+    body = redact(str(text)).rstrip("\n")
     if not body.strip():
         return ""
     lines = body.split("\n")
@@ -69,17 +95,17 @@ def banner(message):
 
 
 def action(message):
-    LOGGER.info("%s", message)
+    LOGGER.info("%s", redact(message))
 
 
 def result(message):
-    LOGGER.info("%s", message)
+    LOGGER.info("%s", redact(message))
 
 
 def step(message):
     """A narrative step logged from inside a test."""
-    LOGGER.info("%s", message)
+    LOGGER.info("%s", redact(message))
 
 
 def note(message):
-    LOGGER.info("%s", message)
+    LOGGER.info("%s", redact(message))

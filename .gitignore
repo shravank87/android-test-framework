@@ -22,3 +22,8 @@ results*.xml
 .vscode/
 *.swp
 Results/
+
+# Local test data: real SSIDs, passwords and account details.
+# Never commit. Copy testdata.example.yaml to testdata.yaml and fill it in.
+config/testdata.yaml
+testdata.yaml
