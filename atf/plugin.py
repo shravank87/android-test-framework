@@ -30,6 +30,9 @@ def pytest_addoption(parser):
                     help="Disable per-test logcat capture.")
     group.addoption("--no-report", action="store_true", default=False,
                     help="Suppress the end-of-run test report.")
+    group.addoption("--redact-secrets", action="store_true", default=False,
+                    help="Mask passwords from testdata in the run log and logcat. "
+                         "Off by default: logs record commands verbatim.")
     group.addoption("--testdata", action="store", default="config/testdata.yaml",
                     help="Path to the local test data file (networks, credentials). "
                          "Gitignored; see config/testdata.example.yaml.")
@@ -50,6 +53,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "mutates: changes device state; restored in teardown")
     config.addinivalue_line("markers", "min_sdk(level): skip on devices below this API level")
     _ACTIVE["config"] = config
+    runlog.set_redaction(config.getoption("--redact-secrets"))
 
 
 def _resolve_serials(config):

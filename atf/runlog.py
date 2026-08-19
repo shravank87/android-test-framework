@@ -17,12 +17,26 @@ REDACTED = "***REDACTED***"
 _handler = None
 _secrets = set()
 
+# Logs are written verbatim by default, credentials included: they are a local
+# debugging aid and Results/ is gitignored. Pass --redact-secrets to mask
+# registered passwords instead, which is worth doing before sharing a run.
+_redaction_enabled = False
+
+
+def set_redaction(enabled):
+    global _redaction_enabled
+    _redaction_enabled = bool(enabled)
+
+
+def redaction_enabled():
+    return _redaction_enabled
+
 
 def register_secret(value):
-    """Mask this value everywhere the log would otherwise print it.
+    """Track a value so --redact-secrets can mask it.
 
     The log records full commands, so a password passed to `cmd wifi
-    connect-network` would be written verbatim without this.
+    connect-network` is written verbatim unless redaction is on.
     """
     text = str(value or "")
     if len(text) >= 4:          # too short to mask without mangling real output
@@ -34,7 +48,7 @@ def clear_secrets():
 
 
 def redact(text):
-    if not text or not _secrets:
+    if not _redaction_enabled or not text or not _secrets:
         return text
     result = str(text)
     for secret in _secrets:
