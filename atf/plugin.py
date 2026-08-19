@@ -1,6 +1,7 @@
 import os
 import re
 from datetime import datetime
+from html import escape
 from pathlib import Path
 
 import pytest
@@ -28,8 +29,9 @@ def pytest_addoption(parser):
                     help="Disable per-test logcat capture.")
     group.addoption("--no-report", action="store_true", default=False,
                     help="Suppress the end-of-run test report.")
-    group.addoption("--report-file", action="store", default="test-report.txt",
-                    help="Where to write the test report. Empty string disables the file.")
+    group.addoption("--report-dir", action="store", default="Results",
+                    help="Root directory for timestamped run results. "
+                         "Empty string writes no files (terminal summary only).")
 
 
 def pytest_configure(config):
@@ -297,8 +299,12 @@ def pytest_runtest_logreport(report):
     reason = ""
     if outcome == "skipped" and isinstance(report.longrepr, tuple):
         reason = report.longrepr[2].replace("Skipped: ", "")
-    elif outcome in ("failed", "error"):
-        reason = str(report.longrepr).strip().splitlines()[-1] if report.longrepr else ""
+    elif outcome in ("failed", "error") and report.longrepr:
+        # Prefer the assertion message ("E   AssertionError: patch is 256 days
+        # old") over the trailing file:line, which says nothing useful.
+        detail = str(report.longrepr).splitlines()
+        errors = [ln[2:].strip() for ln in detail if ln.startswith("E ")]
+        reason = errors[0] if errors else detail[-1].strip()
     _record(config, report.nodeid, outcome, getattr(report, "duration", 0.0), reason)
 
 
@@ -373,18 +379,127 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     writer.write_line("")
     writer.write_line(f"Total: {tally}", bold=True)
 
-    target = config.getoption("--report-file")
-    if target:
-        path = Path(config.rootpath) / target
-        header = [
-            "Test report",
-            f"Generated: {datetime.now():%Y-%m-%d %H:%M:%S}",
-            f"Result:    {tally}",
-            "",
-        ]
-        body = [text for _, text in lines]
-        path.write_text("\n".join(header + body) + "\n", encoding="utf-8")
-        writer.write_line(f"Report written to {path}")
+    report_root = config.getoption("--report-dir")
+    if not report_root:
+        return
+
+    started = getattr(config, "_atf_started", None) or datetime.now()
+    run_dir = Path(config.rootpath) / report_root / started.strftime("%Y-%m-%d_%H-%M-%S")
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    text_body = [
+        "Test report",
+        f"Generated: {started:%Y-%m-%d %H:%M:%S}",
+        f"Result:    {tally}",
+        "",
+        *[text for _, text in lines],
+    ]
+    (run_dir / "report.txt").write_text("\n".join(text_body) + "\n", encoding="utf-8")
+
+    html_path = run_dir / "report.html"
+    html_path.write_text(_render_html(config, started, totals), encoding="utf-8")
+    writer.write_line(f"Report written to {html_path}")
+
+
+def _render_html(config, started, totals):
+    """A plain HTML page listing each suite, its test cases and their results."""
+    store = getattr(config, "_atf_results", {}) or {}
+    suites = {}
+    for nodeid, result in store.items():
+        path, name = _split_nodeid(nodeid)
+        suites.setdefault(path, []).append((name, result))
+
+    total = sum(totals.values())
+    duration = sum(r["duration"] for r in store.values())
+    devices = ", ".join(getattr(config, "_atf_serials", ([], None))[0]) or "none"
+    passed_pct = (100.0 * totals["passed"] / total) if total else 0.0
+
+    rows = []
+    for path in sorted(suites):
+        cases = suites[path]
+        counts = {"passed": 0, "failed": 0, "error": 0, "skipped": 0}
+        for _, result in cases:
+            counts[result["outcome"]] += 1
+        summary = ", ".join(f"{n} {k}" for k, n in counts.items() if n)
+        rows.append(
+            f'<tr class="suite"><td colspan="4">{escape(path)}'
+            f'<span class="meta">{escape(summary)}</span></td></tr>'
+        )
+        for name, result in cases:
+            outcome = result["outcome"]
+            reason = result["reason"] if outcome != "passed" else ""
+            rows.append(
+                f"<tr>"
+                f'<td class="name">{escape(name)}</td>'
+                f'<td><span class="badge {outcome}">{OUTCOME_LABEL[outcome]}</span></td>'
+                f'<td class="num">{result["duration"]:.2f}s</td>'
+                f'<td class="reason">{escape(reason)}</td>'
+                f"</tr>"
+            )
+
+    cards = "".join(
+        f'<div class="card {key}"><b>{totals[key]}</b><span>{label}</span></div>'
+        for key, label in (("passed", "passed"), ("failed", "failed"),
+                           ("error", "errors"), ("skipped", "skipped"))
+        if totals[key]
+    )
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test report {started:%Y-%m-%d %H:%M:%S}</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+         margin: 0; padding: 2rem 1.25rem; color: #1b2220; background: #f7f9f8; }}
+  main {{ max-width: 70rem; margin: 0 auto; }}
+  h1 {{ font-size: 1.4rem; margin: 0 0 .25rem; }}
+  .sub {{ color: #5d6b68; font-size: .88rem; margin-bottom: 1.25rem; }}
+  .cards {{ display: flex; flex-wrap: wrap; gap: .6rem; margin-bottom: 1.5rem; }}
+  .card {{ background: #fff; border: 1px solid #dde5e3; border-radius: 4px;
+          padding: .6rem .9rem; min-width: 6rem; }}
+  .card b {{ display: block; font-size: 1.5rem; line-height: 1.1; }}
+  .card span {{ font-size: .72rem; text-transform: uppercase; letter-spacing: .08em;
+               color: #5d6b68; }}
+  .card.passed b {{ color: #0f7a63; }} .card.failed b {{ color: #c0392b; }}
+  .card.error b {{ color: #c0392b; }} .card.skipped b {{ color: #6e7b78; }}
+  .wrap {{ overflow-x: auto; }}
+  table {{ width: 100%; border-collapse: collapse; background: #fff;
+          border: 1px solid #dde5e3; border-radius: 4px; font-size: .88rem; }}
+  th, td {{ text-align: left; padding: .5rem .75rem; border-bottom: 1px solid #eef2f1; }}
+  th {{ background: #f1f5f4; font-size: .72rem; text-transform: uppercase;
+       letter-spacing: .08em; color: #5d6b68; }}
+  tr.suite td {{ background: #f1f5f4; font-weight: 600; font-family: ui-monospace, Menlo, monospace; }}
+  tr.suite .meta {{ float: right; font-weight: 400; color: #5d6b68; font-family: inherit; }}
+  td.name {{ font-family: ui-monospace, Menlo, monospace; }}
+  td.num {{ text-align: right; font-variant-numeric: tabular-nums; color: #5d6b68; white-space: nowrap; }}
+  td.reason {{ color: #5d6b68; }}
+  .badge {{ display: inline-block; padding: .08rem .45rem; border-radius: 3px;
+           font-size: .72rem; font-weight: 700; letter-spacing: .04em; }}
+  .badge.passed {{ background: #e6f2ee; color: #0f6b57; }}
+  .badge.failed, .badge.error {{ background: #fae9e7; color: #a93226; }}
+  .badge.skipped {{ background: #eef1f0; color: #5d6b68; }}
+</style>
+</head>
+<body>
+<main>
+  <h1>Test report</h1>
+  <p class="sub">{started:%Y-%m-%d %H:%M:%S} &middot; {total} tests &middot;
+     {duration:.2f}s &middot; {passed_pct:.0f}% passed &middot; device(s): {escape(devices)}</p>
+  <div class="cards">{cards}</div>
+  <div class="wrap">
+  <table>
+    <thead><tr><th>Test case</th><th>Result</th><th>Time</th><th>Detail</th></tr></thead>
+    <tbody>
+{chr(10).join(rows)}
+    </tbody>
+  </table>
+  </div>
+</main>
+</body>
+</html>
+"""
 
 
 def pytest_report_header(config):
