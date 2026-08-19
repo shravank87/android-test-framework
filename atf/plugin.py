@@ -29,6 +29,11 @@ def pytest_addoption(parser):
                     help="Disable per-test logcat capture.")
     group.addoption("--no-report", action="store_true", default=False,
                     help="Suppress the end-of-run test report.")
+    group.addoption("--bugreport", action="store", default="first",
+                    choices=("first", "all", "never"),
+                    help="Capture an adb bugreport on failure: on the first "
+                         "failure per device (default), on every failure, or never. "
+                         "Each takes roughly 70s and 10MB.")
     group.addoption("--report-dir", action="store", default="Results",
                     help="Root directory for timestamped run results. "
                          "Empty string writes no files (terminal summary only).")
@@ -180,6 +185,10 @@ def artifact_dir(request, settings, device_serial):
     name = ARTIFACT_SAFE.sub("_", stem).strip("_")[:120] or "test"
     path = settings.artifacts_dir / ARTIFACT_SAFE.sub("_", device_serial) / name
     path.mkdir(parents=True, exist_ok=True)
+    # Published on the item so failure hooks can find it. A fixture resolved
+    # indirectly (the autouse logcat fixture pulls this one in) does not appear
+    # in item.funcargs, so the hooks cannot look it up there.
+    request.node.stash[_ARTIFACT_DIR_KEY] = path
     return path
 
 
@@ -261,6 +270,12 @@ def instrumentation(adb, settings):
 
 _FAILED_KEY = pytest.StashKey[bool]()
 _DRIVER_KEY = pytest.StashKey[object]()
+_ARTIFACT_DIR_KEY = pytest.StashKey[object]()
+
+
+def _artifact_dir_of(item):
+    """The failing test's artifact directory, or None if it never made one."""
+    return item.stash.get(_ARTIFACT_DIR_KEY, None) or item.funcargs.get("artifact_dir")
 
 
 @pytest.hookimpl(hookwrapper=True, tryfirst=True)
@@ -270,6 +285,43 @@ def pytest_runtest_makereport(item, call):
     if result.when == "call" and result.failed:
         item.stash[_FAILED_KEY] = True
         _capture_adb_screenshot(item)
+        _capture_bugreport(item)
+
+
+def _capture_bugreport(item):
+    """Capture a device bugreport for a failing test.
+
+    A bugreport is a whole-device snapshot costing ~70s and ~10MB, and repeat
+    captures within one run describe near-identical state, so the default takes
+    one per device per run.
+    """
+    mode = item.config.getoption("--bugreport")
+    if mode == "never":
+        return
+    device = item.funcargs.get("adb")
+    target = _artifact_dir_of(item)
+    if device is None or target is None:
+        return
+
+    taken = getattr(item.config, "_atf_bugreports", None)
+    if taken is None:
+        taken = item.config._atf_bugreports = set()
+    if mode == "first" and device.serial in taken:
+        return
+    taken.add(device.serial)
+
+    reporter = item.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter:
+        reporter.write_line(
+            f"\ncapturing bugreport for {item.name} (~70s)...", yellow=True)
+    try:
+        path = device.bugreport(Path(target) / "bugreport.zip")
+        size_mb = Path(path).stat().st_size / (1024 * 1024)
+        if reporter:
+            reporter.write_line(f"bugreport saved ({size_mb:.1f}MB)", yellow=True)
+    except Exception as exc:
+        if reporter:
+            reporter.write_line(f"bugreport failed: {exc}", red=True)
 
 
 def _capture_adb_screenshot(item):
@@ -278,7 +330,7 @@ def _capture_adb_screenshot(item):
         return
     try:
         device = item.funcargs.get("adb")
-        target = item.funcargs.get("artifact_dir")
+        target = _artifact_dir_of(item)
         if device and target:
             device.screenshot(str(Path(target) / "failure.png"))
     except Exception:

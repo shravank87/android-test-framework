@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 from .exceptions import AdbError, AdbTimeout, NoDeviceError
 
@@ -224,6 +225,19 @@ class Adb:
         with open(local_path, "wb") as fh:
             fh.write(proc.stdout)
         return local_path
+
+    def bugreport(self, local_path, timeout=300):
+        """Capture a full device bugreport zip.
+
+        Slow and large — roughly 70s and 10MB on a Pixel 6a — so callers should
+        take at most one per run rather than one per failure.
+        """
+        proc = self.run("bugreport", str(local_path), timeout=timeout, check=False)
+        path = Path(local_path)
+        if proc.returncode != 0 or not path.exists() or path.stat().st_size == 0:
+            raise AdbError(["bugreport", str(local_path)], proc.returncode,
+                           proc.stdout, proc.stderr)
+        return str(path)
 
     def screen_size(self):
         out = self.shell("wm", "size")
