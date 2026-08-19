@@ -89,12 +89,28 @@ def parse_battery(text):
     )
 
 
+SKIN_SENSOR_TYPE = 3   # android.os.Temperature.TYPE_SKIN
+
+
 @dataclass
 class Temperature:
     name: str
     celsius: float
     type: int
     status: int
+
+    @property
+    def is_skin(self):
+        """True only for the platform's declared skin sensor (TYPE_SKIN).
+
+        Deliberately type-based, not name-based. Vendor boards expose raw
+        sensors such as `charger_skin_therm` and `skin_therm1` that carry
+        "skin" in the name but sit next to the charging circuitry and run far
+        hotter than anything the user touches; Android synthesises the real
+        figure as a TYPE_SKIN sensor (`VIRTUAL-SKIN`) from them. Matching on
+        the name mistakes board sensors for touch temperature.
+        """
+        return self.type == SKIN_SENSOR_TYPE
 
 
 @dataclass

@@ -1,8 +1,25 @@
 """Battery, thermal, and memory health. Read-only."""
+import time
+
 import pytest
+
+from atf.system import THERMAL_STATUS
 
 MAX_SAFE_TEMP_C = 45.0
 MIN_AVAILABLE_MEMORY_RATIO = 0.10
+
+# Skin sensors bound what the user touches; SoC/NPU sensors normally sit far
+# hotter under load and only throttle in the high eighties.
+MAX_SKIN_TEMP_C = 50.0
+MAX_COMPONENT_TEMP_C = 85.0
+
+# 0 none, 1 light, 2 moderate, 3 severe. Light throttling is routine while
+# charging or under load, so only sustained moderate-or-worse is a failure.
+THROTTLE_LIMIT = 2
+
+# Above this the charger legitimately stops, and the platform may report
+# not_charging rather than full.
+FULL_ENOUGH_PERCENT = 99
 
 
 @pytest.mark.system
@@ -34,17 +51,32 @@ def test_battery_voltage_is_plausible(system):
 
 @pytest.mark.system
 def test_charging_state_is_self_consistent(system):
+    """A powered device must never claim to be discharging.
+
+    A full battery on the charger reports `not_charging` rather than `full` on
+    Pixel hardware — the charger has simply stopped, which is correct — so the
+    stricter assertion only applies below full.
+    """
     battery = system.battery()
-    if battery.charging:
-        assert battery.status in ("charging", "full"), (
-            f"powered but status is {battery.status!r}"
+    if not battery.charging:
+        return
+    assert battery.status != "discharging", "powered but reports discharging"
+    if battery.percent is not None and battery.percent < FULL_ENOUGH_PERCENT:
+        assert battery.status == "charging", (
+            f"powered at {battery.percent:.0f}% but status is {battery.status!r}"
         )
 
 
 @pytest.mark.system
 def test_device_is_not_thermally_throttled(system):
-    thermal = system.thermal()
-    assert not thermal.throttling, f"thermal status is {thermal.status!r}"
+    status = system.thermal().status_code
+    if status >= THROTTLE_LIMIT:
+        # Confirm it is sustained rather than a spike from a burst of work.
+        time.sleep(5)
+        status = system.thermal().status_code
+    assert status < THROTTLE_LIMIT, (
+        f"sustained thermal throttling: {THERMAL_STATUS.get(status, status)!r}"
+    )
 
 
 @pytest.mark.system
@@ -52,9 +84,17 @@ def test_thermal_sensors_report_plausible_values(system):
     thermal = system.thermal()
     if not thermal.temperatures:
         pytest.skip("device exposes no thermal sensors via thermalservice")
-    hottest = thermal.hottest()
-    assert hottest is not None
-    assert hottest.celsius < 60.0, f"{hottest.name} at {hottest.celsius}C"
+
+    too_hot = []
+    for sensor in thermal.temperatures:
+        if sensor.celsius <= 0:
+            continue          # unpopulated sensor
+        limit = MAX_SKIN_TEMP_C if sensor.is_skin else MAX_COMPONENT_TEMP_C
+        if sensor.celsius >= limit:
+            kind = "skin" if sensor.is_skin else "component"
+            too_hot.append(f"{sensor.name} ({kind}) at {sensor.celsius:.1f}C, "
+                           f"limit {limit:.0f}C")
+    assert not too_hot, "; ".join(too_hot)
 
 
 @pytest.mark.system
