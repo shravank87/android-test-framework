@@ -12,10 +12,12 @@ requires an APK.
 | Suite | Covers |
 |---|---|
 | [test_platform_security.py](tests/test_platform_security.py) | SELinux enforcing, bootloader lock, verified boot, encryption, debuggable/user build, security-patch age, root check |
-| [test_connectivity.py](tests/test_connectivity.py) | Airplane/Wi-Fi/Bluetooth/mobile-data state, Wi-Fi association, internet reachability, DNS, radio toggles |
+| [test_connectivity.py](tests/test_connectivity.py) | Airplane/Wi-Fi/Bluetooth/mobile-data state, association quality, scanning, connecting to a configured network, internet reachability, DNS, radio toggles |
 | [test_power_thermal.py](tests/test_power_thermal.py) | Battery level/health/temperature/voltage, charging coherence, thermal throttling, memory pressure, load average |
 | [test_display_audio.py](tests/test_display_audio.py) | Resolution/density, brightness, screen timeout, rotation, per-stream volumes |
 | [test_device_smoke.py](tests/test_device_smoke.py) | Boot state, screenshots, foreground-activity detection |
+| [test_ui_toggles.py](tests/test_ui_toggles.py) | System-UI checks over adb: switch state matches the setting it represents |
+| [test_system_parsers.py](tests/test_system_parsers.py) | Offline — pins every parser to real device output, no hardware needed |
 
 ## Safety model
 
@@ -53,26 +55,127 @@ No root required — everything uses shell-user permissions.
 
 ## Running
 
-Run the whole system suite on every connected device:
+Everything, on every connected device (109 tests):
 
 ```bash
-pytest -m system
+pytest
 ```
 
-Tests taking a device fixture are parametrized across all connected devices, so
-IDs read `test_selinux_is_enforcing[<serial>]`. Target one device with
-`--device <serial>`; parallelize across devices with `-n auto`.
+Read-only checks only — safe on a phone you are using:
 
-The offline parser tests need no hardware at all:
+```bash
+pytest -m "system and not mutates"
+```
+
+One file:
+
+```bash
+pytest tests/test_connectivity.py
+```
+
+One test:
+
+```bash
+pytest tests/test_connectivity.py::test_wifi_scan_finds_networks
+```
+
+Anything matching a keyword, across files:
+
+```bash
+pytest -k wifi
+```
+
+No hardware needed — the offline parser suites (38 tests):
 
 ```bash
 pytest tests/test_system_parsers.py tests/test_framework_unit.py
 ```
 
-Produce a shareable report:
+Add `-v` for one line per test instead of dots, `-x` to stop at the first
+failure, and `-n auto` to run devices in parallel.
+
+### Selecting by marker
+
+| Marker | Tests | Meaning |
+|---|---|---|
+| `system` | 59 | System-level checks |
+| `mutates` | 9 | Changes device state, restored in teardown |
+| `adb` | 7 | Plain device/shell automation |
+
+### Choosing devices
+
+Tests taking a device fixture are parametrized across every connected device, so
+IDs read `test_selinux_is_enforcing[<serial>]`. Narrow with `--device <serial>`,
+repeatable for several. With none connected, device tests skip rather than fail.
+
+### Useful flags
+
+| Flag | Effect |
+|---|---|
+| `--report-dir DIR` | Where run folders go (default `Results`) |
+| `--no-report` | Write no files at all; terminal summary only |
+| `--bugreport never` | Skip the end-of-run bugreport |
+| `--testdata PATH` | Use a different test data file |
+| `--redact-secrets` | Mask passwords in the run log and logcat |
+| `--no-logcat` | Skip per-test logcat capture |
+
+## What a run produces
+
+Every run writes a timestamped folder:
+
+```
+Results/2026-08-18_21-52-12/
+├── report.html                 suites, test names, results, failure reasons
+├── report.txt                  the same as plain text
+└── artifacts/
+    ├── test_run.log            timestamped log of the whole run
+    └── <serial>/
+        ├── bugreport.zip       only if something failed
+        └── <test name>/
+            ├── logcat.txt      captured per test
+            └── failure.png     only on failure
+```
+
+`test_run.log` records every device command and its full output, so a test reads
+back as the actions it took and what each returned:
+
+```
+21:52:12.611  ── TEST test_connects_to_configured_network
+21:52:12.611  connecting to HomeNet (wpa3)
+21:52:12.611  shell cmd wifi connect-network HomeNet wpa3 hunter2
+21:52:12.725  associated at -61 dBm on 5GHz
+21:52:12.799  TEST PASS  test_connects_to_configured_network (0.53s)
+```
+
+Commands are logged verbatim, credentials included — pass `--redact-secrets` to
+mask them before sharing a run folder. A bugreport is taken once at the end of a
+run that had failures, not per failing test: each costs about 70s and 10MB.
+
+`Results/` is gitignored.
+
+## Test data
+
+Tests needing real details — a network and its password — read them from
+`config/testdata.yaml`, which is gitignored. Copy the template and fill it in:
 
 ```bash
-pytest -m system --html=report.html --self-contained-html
+cp config/testdata.example.yaml config/testdata.yaml
+```
+
+```yaml
+wifi:
+  default:
+    ssid: "YOUR_NETWORK"
+    password: "YOUR_PASSWORD"
+    security: wpa3        # open | wep | wpa2 | wpa3
+```
+
+Reach it through the `test_data` fixture; tests skip when the file is absent, so
+the suite still runs without one.
+
+```python
+def test_connects(test_data, adb):
+    network = test_data.wifi_network("default")
 ```
 
 ## Continuous integration
@@ -82,7 +185,7 @@ request to `main`, across Python 3.9, 3.11 and 3.12.
 
 Hosted runners have no Android device attached, so device-dependent tests skip by
 design and the offline parser suite carries the run — currently **38 tests
-executed, 69 skipped**. CI deliberately runs the *whole* suite rather than just
+executed, 71 skipped**. CI deliberately runs the *whole* suite rather than just
 the offline files: if a device test ever started erroring instead of skipping
 without hardware, that regression would surface here.
 
@@ -96,9 +199,14 @@ phone attached, or a cloud device farm.
 ## Fixtures
 
 - `system` — read-only `System` facade: `.platform()`, `.battery()`, `.thermal()`,
-  `.memory()`, `.radios()`, `.display()`, `.volume(stream)`, `.has_internet()`
+  `.memory()`, `.radios()`, `.display()`, `.volume(stream)`, `.wifi_info()`,
+  `.wifi_scan()`, `.active_network()`, `.has_internet()`
 - `device_state` — mutate with guaranteed restore: `.put_setting()`, `.set_wifi()`,
   `.set_airplane_mode()`, `.set_bluetooth()`
+- `ui` — drive the screen over adb, no Appium: `.tap()`, `.scroll_to()`,
+  `.set_switch()`, `.type_into()`
+- `test_data` — networks and credentials from `config/testdata.yaml`
+- `step` — log a narrative line into `test_run.log`
 - `adb` — raw device access for anything the facade doesn't cover
 - `device_info` — serial, model, Android version, SDK level
 - `artifact_dir` — per-test, per-device output directory
@@ -171,11 +279,6 @@ surface immediately.
 
 When adding a reader, probe the real command output first and add a fixture-based
 parser test alongside it.
-
-## Artifacts
-
-Each test writes to `artifacts/<serial>/<test name>/`: `logcat.txt` always, plus
-`failure.png` on failure.
 
 ## Configuration
 
